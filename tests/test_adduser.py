@@ -73,7 +73,11 @@ class AddUserValidationTests(unittest.TestCase):
 
             self.assertTrue(Path(result["path"]).exists())
             self.assertEqual(
-                subprocess.check_output(["git", "rev-parse", "--is-bare-repository"], cwd=result["path"], text=True).strip(),
+                subprocess.check_output(
+                    ["git", "-c", "safe.bareRepository=all", "rev-parse", "--is-bare-repository"],
+                    cwd=result["path"],
+                    text=True,
+                ).strip(),
                 "true",
             )
 

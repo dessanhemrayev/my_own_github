@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+import os
+
+from fastapi import APIRouter, HTTPException, Request
 
 try:
     from simple_own_github.service.adduser import root_check
@@ -18,13 +20,26 @@ from ..models import (
 router = APIRouter()
 
 
+def _require_api_key(request: Request) -> None:
+    expected_key = os.environ.get("SIMPLE_OWN_GITHUB_API_KEY")
+    if not expected_key:
+        return
+
+    provided_key = request.headers.get("X-API-Key") or request.headers.get("Authorization")
+    if provided_key and provided_key.lower().startswith("bearer "):
+        provided_key = provided_key.split(None, 1)[1]
+    if provided_key != expected_key:
+        raise HTTPException(status_code=401, detail="Authentication required.")
+
+
 @router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @router.post("/users/validate", response_model=UserValidationResponse)
-def validate_user(payload: UserValidationRequest) -> dict[str, bool]:
+def validate_user(payload: UserValidationRequest, request: Request) -> dict[str, bool]:
+    _require_api_key(request)
     return {
         "username": user_service.is_valid_username(payload.username),
         "comment": user_service.is_valid_comment(payload.comment),
@@ -33,7 +48,8 @@ def validate_user(payload: UserValidationRequest) -> dict[str, bool]:
 
 
 @router.post("/users", response_model=UserCreatedResponse)
-def create_user(payload: UserCreateRequest) -> dict[str, str]:
+def create_user(payload: UserCreateRequest, request: Request) -> dict[str, str]:
+    _require_api_key(request)
     if not user_service.is_valid_username(payload.username):
         raise HTTPException(status_code=400, detail="Username must contain only lowercase letters.")
     if not user_service.is_valid_comment(payload.comment):
@@ -46,5 +62,8 @@ def create_user(payload: UserCreateRequest) -> dict[str, str]:
     except SystemExit as exc:
         raise HTTPException(status_code=403, detail="Root privileges are required to create a system user.") from exc
 
-    user_service.create_user(payload.username, payload.comment, payload.password)
+    try:
+        user_service.create_user(payload.username, payload.comment, payload.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"status": "created", "username": payload.username}

@@ -7,8 +7,24 @@ const messageBox = document.getElementById('message');
 const searchInput = document.getElementById('repo-search');
 const sortOrder = document.getElementById('sort-order');
 let repositories = [];
+let selectedOwner = null;
+let selectedRepo = null;
 
 const currentUser = () => usernameInput.value.trim() || 'root';
+
+function resetRepoDetail() {
+  repoDetail.replaceChildren();
+  const placeholder = document.createElement('div');
+  placeholder.className = 'detail-placeholder';
+  const glyph = document.createElement('span');
+  glyph.className = 'detail-glyph';
+  glyph.setAttribute('aria-hidden', 'true');
+  glyph.textContent = '⌘';
+  const note = document.createElement('p');
+  note.innerHTML = 'Выберите репозиторий,<br />чтобы посмотреть подробности.';
+  placeholder.append(glyph, note);
+  repoDetail.append(placeholder);
+}
 
 function setMessage(text, type = '') {
   messageBox.textContent = text;
@@ -30,6 +46,8 @@ function makeDetailBlock(label, value) {
 
 async function showRepository(repoName) {
   const username = currentUser();
+  selectedOwner = username;
+  selectedRepo = repoName;
   repoDetail.replaceChildren();
   repoDetail.textContent = 'Загружаем…';
   try {
@@ -116,11 +134,20 @@ async function loadRepositories() {
     if (!response.ok) throw new Error(payload.detail || `Не удалось загрузить репозитории пользователя ${username}.`);
     repositories = payload;
     renderRepositories();
+    if (selectedOwner === username && selectedRepo && repositories.some((repo) => repo.name === selectedRepo)) {
+      await showRepository(selectedRepo);
+    } else {
+      selectedOwner = username;
+      selectedRepo = null;
+      resetRepoDetail();
+    }
     setMessage(`Загружено: ${repositories.length}`, 'success');
   } catch (error) {
     repositories = [];
     renderRepositories();
-    repoDetail.replaceChildren();
+    selectedOwner = null;
+    selectedRepo = null;
+    resetRepoDetail();
     setMessage(error.message, 'error');
   }
 }

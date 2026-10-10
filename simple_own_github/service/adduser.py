@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import fcntl
 import getpass
 import os
 import pwd
@@ -12,6 +13,12 @@ from pathlib import Path
 USERNAME_PATTERN = re.compile(r"^[a-z]+$")
 COMMENT_PATTERN = re.compile(r"^[a-z,]*$")
 PASSWORD_SYMBOLS = r" !#$%&'()*+,-./[\\]^_`{|}~\""
+
+
+def _normalize_secret(value: str) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.replace("\r", "").replace("\n", "")
 
 
 def is_valid_username(username: str) -> bool:
@@ -32,6 +39,8 @@ def is_valid_password(password: str) -> bool:
     """Require at least 8 chars and a mix of letters, digits, and symbols."""
     if not isinstance(password, str):
         return False
+    if not password or "\n" in password or "\r" in password:
+        return False
     if len(password) < 8:
         return False
     if not re.search(r"[a-z]", password):
@@ -44,21 +53,26 @@ def is_valid_password(password: str) -> bool:
 
 
 def hash_password(password: str) -> str:
-    """Hash the password with OpenSSL using SHA-512/crypt format."""
+    """Hash the password with the strong OpenSSL SHA-512/crypt format."""
+    candidate = _normalize_secret(password)
+    if not is_valid_password(candidate):
+        raise ValueError("Password must be at least 8 chars and include letters, digits, and symbols.")
     return subprocess.check_output(
-        ["openssl", "passwd", "-1", "-stdin"],
-        input=f"{password}\n".encode("utf-8"),
+        ["openssl", "passwd", "-6", "-stdin"],
+        input=f"{candidate}\n".encode("utf-8"),
         stderr=subprocess.DEVNULL,
     ).decode("utf-8").strip()
 
 
 def build_useradd_command(username: str, comment: str, password: str) -> str:
-    """Return a detailed shell command showing the useradd flow."""
-    quoted_password = shlex.quote(password)
+    """Return a shell command showing the useradd flow without printing a raw password."""
+    safe_comment = shlex.quote(comment or "")
+    safe_name = shlex.quote(username)
+    _ = password
     return (
-        f"useradd --create-home --user-group --comment {comment} "
+        f"useradd --create-home --user-group --comment {safe_comment} "
         f"--home /home/{username} --shell /bin/bash "
-        f"--password \"$(printf '%s' {quoted_password} | openssl passwd -1 -stdin)\" {username}"
+        f"--password \"$(printf '%s' '<redacted>' | openssl passwd -1 -stdin)\" {safe_name}"
     )
 
 
@@ -136,10 +150,21 @@ def create_user(username: str, comment: str = "", password: str | None = None) -
         raise ValueError("Username must contain only lowercase letters.")
     if not is_valid_comment(comment):
         raise ValueError("Comment may contain only lowercase letters and commas.")
-    if password is None or not is_valid_password(password):
+    if password is None:
+        raise ValueError("Password is required.")
+
+    normalized_password = _normalize_secret(password)
+    if not is_valid_password(normalized_password):
         raise ValueError("Password must be at least 8 chars and include letters, digits, and symbols.")
 
-    encrypted_password = hash_password(password)
+    try:
+        pwd.getpwnam(username)
+    except KeyError:
+        pass
+    else:
+        raise ValueError(f"User '{username}' already exists.")
+
+    encrypted_password = hash_password(normalized_password)
     subprocess.run(
         [
             "useradd",
@@ -156,6 +181,8 @@ def create_user(username: str, comment: str = "", password: str | None = None) -
             username,
         ],
         check=True,
+        capture_output=True,
+        text=True,
     )
     return username
 
@@ -212,34 +239,65 @@ class RepositoryService:
         normalized = repo_name.removesuffix(".git")
         return bool(re.fullmatch(r"[A-Za-z0-9._-]+", normalized)) and normalized not in {"", ".", ".."}
 
-    def create_repository(self, username: str, repo_name: str) -> dict[str, str]:
+    def _user_repo_root(self, username: str) -> Path:
         if not is_valid_username(username):
             raise ValueError("Username must contain only lowercase letters.")
-        if not self.is_valid_repo_name(repo_name):
-            raise ValueError("Repository name may contain only letters, numbers, dots, underscores, hyphens.")
+        root = (Path(self.base_dir) / username / "repositories").resolve(strict=False)
+        return root
 
+    def _resolve_repository_path(self, username: str, repo_name: str) -> tuple[Path, Path]:
         normalized_name = repo_name.removesuffix(".git")
-        repo_root = self.base_dir / username / "repositories"
+        if not self.is_valid_repo_name(normalized_name):
+            raise ValueError("Repository name may contain only letters, numbers, dots, underscores, hyphens.")
+        repo_root = self._user_repo_root(username)
+        repo_path = (repo_root / normalized_name).resolve(strict=False)
+        if repo_path.parent != repo_root:
+            raise ValueError("Repository path escapes the user's repository root.")
+        return repo_root, repo_path
+
+    def create_repository(self, username: str, repo_name: str) -> dict[str, str]:
+        repo_root, repo_path = self._resolve_repository_path(username, repo_name)
         repo_root.mkdir(parents=True, exist_ok=True)
+        lock_path = repo_root / ".create.lock"
+        with open(lock_path, "a+", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            if repo_path.exists() or repo_path.is_symlink():
+                raise FileExistsError(f"Repository '{repo_path.name}' already exists for user '{username}'.")
 
-        repo_path = repo_root / normalized_name
-        if repo_path.exists():
-            raise FileExistsError(f"Repository '{normalized_name}' already exists for user '{username}'.")
+            try:
+                subprocess.run(["git", "init", "--bare", str(repo_path)], check=True, capture_output=True, text=True)
+            except subprocess.CalledProcessError:
+                if repo_path.exists() and not any(repo_path.iterdir()):
+                    shutil.rmtree(repo_path, ignore_errors=True)
+                raise
 
-        subprocess.run(["git", "init", "--bare", str(repo_path)], check=True, capture_output=True, text=True)
+            subprocess.run(["git", "config", "--global", "--add", "safe.directory", str(repo_path)], check=False, capture_output=True, text=True)
 
-        try:
-            pwd.getpwnam(username)
-            user_info = pwd.getpwnam(username)
-            if os.geteuid() == 0:
-                os.chown(repo_root, user_info.pw_uid, user_info.pw_gid)
-                os.chown(repo_path, user_info.pw_uid, user_info.pw_gid)
-        except KeyError:
-            pass
+            try:
+                pwd.getpwnam(username)
+                user_info = pwd.getpwnam(username)
+                if os.geteuid() == 0:
+                    for current_root, dirnames, filenames in os.walk(repo_path):
+                        for dirname in dirnames:
+                            os.chown(os.path.join(current_root, dirname), user_info.pw_uid, user_info.pw_gid)
+                        for filename in filenames:
+                            os.chown(os.path.join(current_root, filename), user_info.pw_uid, user_info.pw_gid)
+                    os.chown(repo_root, user_info.pw_uid, user_info.pw_gid)
+                    os.chown(repo_path, user_info.pw_uid, user_info.pw_gid)
+            except KeyError:
+                pass
+
+            subprocess.run(["git", "--git-dir", str(repo_path), "config", "core.sharedRepository", "group"], check=True, capture_output=True, text=True)
+            for current_root, dirnames, filenames in os.walk(repo_path):
+                for dirname in dirnames:
+                    os.chmod(os.path.join(current_root, dirname), 0o2775)
+                for filename in filenames:
+                    os.chmod(os.path.join(current_root, filename), 0o664)
+            os.chmod(repo_path, 0o2775)
 
         return {
             "username": username,
-            "repo": normalized_name,
+            "repo": repo_path.name,
             "path": str(repo_path),
         }
 
@@ -247,43 +305,46 @@ class RepositoryService:
         if not is_valid_username(username):
             raise ValueError("Username must contain only lowercase letters.")
 
-        repo_root = self.base_dir / username / "repositories"
+        repo_root = self._user_repo_root(username)
         if not repo_root.exists():
             return []
 
-        repos = []
+        repos: list[dict[str, str]] = []
         for item in sorted(repo_root.iterdir()):
-            if item.is_dir():
-                repos.append({
-                    "username": username,
-                    "name": item.name,
-                    "path": str(item),
-                })
+            if item.is_symlink() or not item.is_dir():
+                continue
+            if not self.is_valid_repo_name(item.name):
+                continue
+            if not (item / "HEAD").exists() and not (item / "config").exists():
+                continue
+            repos.append({
+                "username": username,
+                "name": item.name,
+                "path": str(item),
+            })
         return repos
 
     def get_repository(self, username: str, repo_name: str) -> dict[str, str]:
-        normalized_name = repo_name.removesuffix(".git")
-        repo_root = self.base_dir / username / "repositories" / normalized_name
-        if not repo_root.exists():
-            raise FileNotFoundError(f"Repository '{normalized_name}' was not found for user '{username}'.")
+        _, repo_path = self._resolve_repository_path(username, repo_name)
+        if not repo_path.exists() or not repo_path.is_dir():
+            raise FileNotFoundError(f"Repository '{repo_path.name}' was not found for user '{username}'.")
 
         return {
             "username": username,
-            "name": normalized_name,
-            "path": str(repo_root),
+            "name": repo_path.name,
+            "path": str(repo_path),
         }
 
     def delete_repository(self, username: str, repo_name: str) -> dict[str, str]:
-        normalized_name = repo_name.removesuffix(".git")
-        repo_root = self.base_dir / username / "repositories" / normalized_name
-        if not repo_root.exists():
-            raise FileNotFoundError(f"Repository '{normalized_name}' was not found for user '{username}'.")
+        repo_root, repo_path = self._resolve_repository_path(username, repo_name)
+        if not repo_path.exists() or not repo_path.is_dir():
+            raise FileNotFoundError(f"Repository '{repo_path.name}' was not found for user '{username}'.")
 
-        shutil.rmtree(repo_root)
+        shutil.rmtree(repo_path)
         return {
             "username": username,
-            "repo": normalized_name,
-            "path": str(repo_root),
+            "repo": repo_path.name,
+            "path": str(repo_path),
             "status": "deleted",
         }
 

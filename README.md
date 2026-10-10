@@ -4,7 +4,7 @@ A small service-style Python application for managing Linux users and bare Git r
 
 - Validates username, password and comment inputs
 - Checks whether the user already exists
-- Uses `openssl passwd -1` to generate a hashed password
+- Uses `openssl passwd -6` to generate a stronger hashed password
 - Creates the actual system account with `useradd`
 - Exposes a service-oriented API via `UserService`
 - Runs as a real HTTP service with FastAPI
@@ -32,10 +32,12 @@ python -m pip install -r requirements.txt
 Run the web service and dashboard:
 
 ```bash
-python -m simple_own_github --web --host 0.0.0.0 --port 8000
+SIMPLE_OWN_GITHUB_API_KEY=super-secret python -m simple_own_github --web --host 0.0.0.0 --port 8000
 ```
 
 Open <http://localhost:8000/> for the repository dashboard. Interactive API documentation is available at <http://localhost:8000/docs>.
+
+If you deploy the service beyond localhost, configure `SIMPLE_OWN_GITHUB_API_KEY` and send it via the `X-API-Key` header or `Authorization: Bearer ...` to protect the user and repository endpoints.
 
 ## HTTP endpoints
 
@@ -54,15 +56,17 @@ Example requests:
 ```bash
 curl -X POST http://localhost:8000/users \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $SIMPLE_OWN_GITHUB_API_KEY" \
   -d '{"username":"alex","password":"Strong1!","comment":"dev,ops"}'
 
 curl -X POST http://localhost:8000/users/alex/repos \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $SIMPLE_OWN_GITHUB_API_KEY" \
   -d '{"name":"demo"}'
 
-curl http://localhost:8000/users/alex/repos
-curl http://localhost:8000/users/alex/repos/demo
-curl -X DELETE http://localhost:8000/users/alex/repos/demo
+curl -H "X-API-Key: $SIMPLE_OWN_GITHUB_API_KEY" http://localhost:8000/users/alex/repos
+curl -H "X-API-Key: $SIMPLE_OWN_GITHUB_API_KEY" http://localhost:8000/users/alex/repos/demo
+curl -X DELETE -H "X-API-Key: $SIMPLE_OWN_GITHUB_API_KEY" http://localhost:8000/users/alex/repos/demo
 ```
 
 ## Development
