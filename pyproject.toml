@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simple-own-github"
+version = "0.1.0"
+description = "Utility for creating Linux user accounts"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Dessan" }]
+
+[project.optional-dependencies]
+dev = [
+	"pre-commit>=4.2,<5",
+	"ruff>=0.11,<1",
+]
+
+[project.scripts]
+simple-own-github = "simple_own_github.cli.main:main"
+
+[tool.setuptools]
+packages = { find = { include = ["simple_own_github*"] } }
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

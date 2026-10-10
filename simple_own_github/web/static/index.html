@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Репозитории · Turkmen code hub</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="wordmark" href="/" aria-label="Turkmen code hub, главная"><span class="mark">t</span> Turkmen code hub</a>
+        <div class="topbar-meta"><span class="status-dot"></span> Локальный git-сервис</div>
+        <button id="refresh-btn" class="icon-button" type="button" title="Обновить список" aria-label="Обновить список">↻</button>
+      </header>
+
+      <main class="workspace">
+        <aside class="sidebar">
+          <div class="sidebar-heading">
+            <span class="section-kicker">Рабочая область</span>
+            <h1>Репозитории</h1>
+          </div>
+
+          <div class="field-group">
+            <label for="username-input">Владелец</label>
+            <div class="owner-field">
+              <span class="owner-prefix">@</span>
+              <input id="username-input" type="text" placeholder="имя пользователя" autocomplete="username" />
+            </div>
+            <button id="load-btn" class="text-button" type="button">Открыть пользователя <span aria-hidden="true">→</span></button>
+          </div>
+
+          <form id="repo-form" class="create-form">
+            <div class="form-heading"><span class="plus-mark" aria-hidden="true">+</span><h2>Новый репозиторий</h2></div>
+            <label for="repo-name">Имя</label>
+            <input id="repo-name" type="text" placeholder="например, api-service" autocomplete="off" />
+            <p class="field-note">Буквы, цифры, точки, дефисы и подчёркивания.</p>
+            <button type="submit" class="primary-btn">Создать репозиторий</button>
+          </form>
+
+          <p id="message" class="message" aria-live="polite"></p>
+          <div class="sidebar-foot"><span class="status-dot"></span> API доступен</div>
+        </aside>
+
+        <section class="main-area" aria-labelledby="repo-heading">
+          <div class="main-heading">
+            <div>
+              <p class="section-kicker" id="owner-caption">Все проекты</p>
+              <h2 id="repo-heading">Все репозитории <span id="repo-count" class="count-badge">0</span></h2>
+            </div>
+          </div>
+
+          <div class="toolbar">
+            <label class="search-field" for="repo-search"><span aria-hidden="true">⌕</span><input id="repo-search" type="search" placeholder="Найти репозиторий…" /></label>
+            <label class="sort-field" for="sort-order"><span>Сортировка</span>
+              <select id="sort-order"><option value="asc">По имени, А–Я</option><option value="desc">По имени, Я–А</option></select>
+            </label>
+          </div>
+
+          <div class="repo-layout">
+            <div id="repo-list" class="repo-list" aria-live="polite"></div>
+            <aside id="repo-detail" class="repo-detail" aria-live="polite" aria-label="Подробности репозитория">
+              <div class="detail-placeholder"><span class="detail-glyph" aria-hidden="true">⌘</span><p>Выберите репозиторий,<br />чтобы посмотреть подробности.</p></div>
+            </aside>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

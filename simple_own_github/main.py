@@ -1,9 +1,10 @@
+from __future__ import annotations
 
-from adduser import addME
+try:
+    from .cli.main import main
+except ImportError:  # pragma: no cover
+    from cli.main import main
 
-def main():
-	print("Hello user in my own GITHUB(Dessan)")
-	addME()
 
 if __name__ == "__main__":
-	main()
+    main()
